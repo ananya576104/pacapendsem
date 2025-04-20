@@ -1,0 +1,189 @@
+Absolutely! Let's break this **CUDA prefix sum (scan)** code down **step-by-step**, so you understand how it works deeply — this is a **classic parallel algorithm** and often asked in GPU programming exams!
+
+---
+
+## 📌 What This Code Does
+
+This code performs an **exclusive scan** or **prefix sum**:
+
+### 🔷 Example:
+Input array:  
+```
+h_in = [3, 1, 7, 0, 4, 1, 6, 3]
+```
+
+Prefix sum result (inclusive):  
+```
+[3, 4, 11, 11, 15, 16, 22, 25]
+```
+
+This result is computed in **parallel**, block by block, using **shared memory** and block sums.
+
+---
+
+## 🧠 Key Concepts
+
+### 1. **Shared Memory**:
+- `temp[BLOCK_SIZE]` is used for fast intra-block communication.
+
+### 2. **Two-Phase Algorithm**:
+- **Phase 1:** Each block computes scan on its own chunk and stores **block sum**.
+- **Phase 2:** Offsets are added to each block’s result using the sum of **previous blocks**.
+
+---
+
+## 🧩 Breakdown of Each Part
+
+### 🔹 Constants & Globals
+
+```c
+#define BLOCK_SIZE 4
+```
+
+Means each block has 4 threads → each handles 1 element of the input.
+
+---
+
+### 🔹 `Scan` Kernel (Phase 1 - Block-wise Scan)
+
+```c
+__global__ void Scan(int *d_in, int *d_out, int *d_blockSums, int n)
+```
+
+#### ✅ Inside `Scan`:
+
+```c
+__shared__ int temp[BLOCK_SIZE];
+```
+- Shared memory to hold input segment for this block.
+
+```c
+int gid = blockIdx.x * blockDim.x + threadIdx.x;
+```
+- Global ID to access input array element.
+
+```c
+temp[tid] = (gid < n) ? d_in[gid] : 0;
+```
+- Load element from global memory to shared memory.
+
+#### 🔁 Inclusive scan loop:
+
+```c
+for (int offset = 1; offset <= tid; offset *= 2) {
+    int val = temp[tid - offset];
+    __syncthreads();
+    temp[tid] += val;
+    __syncthreads();
+}
+```
+
+➡️ This is **Hillis–Steele Scan** (sequential version), using synchronization between reads and writes.  
+Each thread adds the value from its `offset` neighbor.
+
+Example of this scan (in shared memory) for block input `[3, 1, 7, 0]`:
+
+| tid | offset = 1 | offset = 2 |
+|-----|------------|------------|
+| 0   | 3          | 3          |
+| 1   | 3+1=4      | 4          |
+| 2   | 7+1=8      | 3+8=11     |
+| 3   | 0+7=7      | 4+7=11     |
+
+Result after scan in shared memory:  
+```
+[3, 4, 11, 11]
+```
+
+```c
+if (tid == BLOCK_SIZE - 1) {
+    d_blockSums[blockIdx.x] = temp[tid];
+}
+```
+- Store last thread’s result as the **block sum**, used in Phase 2.
+
+```c
+if (gid < n) d_out[gid] = temp[tid];
+```
+- Save the partial prefix sum to global output array.
+
+---
+
+### 🔹 `addBlockOffsets` Kernel (Phase 2 - Adding Offsets)
+
+```c
+__global__ void addBlockOffsets(int *d_out, int *d_blockSums, int n)
+```
+
+This adds the sum of all **previous blocks** to the current block's output.
+
+```c
+if (blockIdx.x > 0 && gid < n) {
+    for (int i = 0; i < blockIdx.x; i++)
+        d_out[gid] += d_blockSums[i];
+}
+```
+
+So:
+- Block 0 → nothing is added (no previous block)
+- Block 1 → adds d_blockSums[0]
+- Block 2 → adds d_blockSums[0] + d_blockSums[1]
+- And so on…
+
+---
+
+## 🧪 Sample Dry Run
+
+Input:  
+```
+N = 8, BLOCK_SIZE = 4
+h_in = [3, 1, 7, 0, 4, 1, 6, 3]
+```
+
+### 🧾 Phase 1: Block-wise Scan
+
+**Block 0:** `[3, 1, 7, 0]` → Prefix sum → `[3, 4, 11, 11]`  
+Block sum = `11`
+
+**Block 1:** `[4, 1, 6, 3]` → Prefix sum → `[4, 5, 11, 14]`  
+Block sum = `14`
+
+`d_blockSums = [11, 14]`
+
+---
+
+### ➕ Phase 2: Offset Addition
+
+- Block 0: No addition
+- Block 1: Add `11` to each → `[15, 16, 22, 25]`
+
+### ✅ Final Output
+
+```
+[3, 4, 11, 11, 15, 16, 22, 25]
+```
+
+---
+
+## 🧼 Memory Cleanup
+
+```c
+cudaFree(d_in);
+cudaFree(d_out);
+cudaFree(d_blockSums);
+```
+
+---
+
+## 🚩 Summary
+
+| Component        | Purpose                                      |
+|------------------|----------------------------------------------|
+| `Scan` kernel     | Computes prefix sum within each block       |
+| `addBlockOffsets` | Adds global offsets based on previous blocks |
+| `shared memory`   | Used for fast per-block computation         |
+| `block sums`      | Used to stitch local scans into global scan |
+
+---
+
+Let me know if you'd like a **diagram**, or I can convert this to **exclusive scan**, or help with a **visual animation** of the shared memory computation!
