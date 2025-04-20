@@ -1,0 +1,123 @@
+Here is a single CUDA program that combines the row-wise, column-wise, and 2D grid-based matrix addition approaches into one code. The user can choose which approach to use during runtime.
+
+```cpp
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+#include <stdio.h>
+
+// Row-wise matrix addition kernel
+__global__ void kernelrow(int * A, int * B, int * C, int n)
+{
+    int row = threadIdx.x;
+    for (int i = 0; i < n; i++)
+        C[row * n + i] = A[row * n + i] + B[row * n + i];
+}
+
+// Column-wise matrix addition kernel
+__global__ void kernelcol(int * A, int * B, int * C, int m)
+{
+    int col = threadIdx.x;
+    int n = blockDim.x;
+    for (int i = 0; i < m; i++)
+        C[i * n + col] = A[i * n + col] + B[i * n + col];
+}
+
+// 2D grid-based matrix addition kernel
+__global__ void kernelele(int * A, int * B, int * C)
+{
+    int col = threadIdx.x;
+    int row = threadIdx.y;
+    int n = blockDim.x;
+    C[row * n + col] = A[row * n + col] + B[row * n + col];
+}
+
+int main()
+{
+    int m, n;
+    printf("Enter matrix dimensions (m and n): ");
+    scanf("%d %d", &m, &n);
+
+    int A[m * n], B[m * n], C[m * n];
+    int k = 0;
+
+    // Input matrix A
+    printf("Enter matrix A: \n");
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            scanf("%d", &A[k++]);
+        }
+    }
+
+    k = 0;
+
+    // Input matrix B
+    printf("Enter matrix B: \n");
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            scanf("%d", &B[k++]);
+        }
+    }
+
+    int *d_A, *d_B, *d_C;
+    cudaMalloc((void**)&d_A, m * n * sizeof(int));
+    cudaMalloc((void**)&d_B, m * n * sizeof(int));
+    cudaMalloc((void**)&d_C, m * n * sizeof(int));
+
+    cudaMemcpy(d_A, A, m * n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, B, m * n * sizeof(int), cudaMemcpyHostToDevice);
+
+    int choice;
+    printf("Choose kernel for matrix addition:\n");
+    printf("1. Row-wise matrix addition\n");
+    printf("2. Column-wise matrix addition\n");
+    printf("3. 2D grid matrix addition\n");
+    scanf("%d", &choice);
+
+    // Choose kernel to execute based on user input
+    if (choice == 1) {
+        kernelrow<<<1, m>>>(d_A, d_B, d_C, n);
+    } else if (choice == 2) {
+        kernelcol<<<1, n>>>(d_A, d_B, d_C, m);
+    } else if (choice == 3) {
+        dim3 blk(n, m, 1);
+        kernelele<<<1, blk>>>(d_A, d_B, d_C);
+    } else {
+        printf("Invalid choice!\n");
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        return -1;
+    }
+
+    cudaMemcpy(C, d_C, m * n * sizeof(int), cudaMemcpyDeviceToHost);
+
+    k = 0;
+    printf("Final matrix C: \n");
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            printf("%d ", C[k++]);
+        }
+        printf("\n");
+    }
+
+    // Free allocated memory
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+
+    return 0;
+}
+```
+
+### Explanation of Changes:
+1. **Functions Combined**: The row-wise, column-wise, and 2D grid-based kernels (`kernelrow`, `kernelcol`, `kernelele`) are kept in the same code.
+2. **User Choice**: The user is prompted to select the matrix addition method by entering `1` for row-wise, `2` for column-wise, or `3` for 2D grid-based. Based on the user's choice, the corresponding kernel is executed.
+3. **Matrix Input and Memory Management**: As before, matrices `A` and `B` are input, and memory is allocated on the GPU for them. After the kernel execution, the result matrix `C` is copied back to the host and printed.
+
+### Running the Program:
+1. The user is prompted to enter matrix dimensions (`m` and `n`).
+2. The program asks for the elements of matrices `A` and `B`.
+3. The user selects the method of matrix addition (row-wise, column-wise, or 2D grid).
+4. The final matrix `C` is displayed after the kernel executes.
+
+This combined code lets the user choose which method to use for matrix addition, and demonstrates how the three different approaches can be applied in CUDA programming.
