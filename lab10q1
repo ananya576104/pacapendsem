@@ -1,0 +1,292 @@
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+#include <stdio.h>
+
+// CUDA Kernel to perform matrix multiplication
+__global__ void MatrixMul(int* A, int* B, int* C, int n, int m, int q)
+{
+    // Calculate the global row and column this thread is responsible for
+    int row = threadIdx.y + blockDim.y * blockIdx.y;
+    int col = threadIdx.x + blockDim.x * blockIdx.x;
+
+    // Ensure the thread is within bounds of output matrix C (size m x q)
+    if (row < m && col < q)
+    {
+        int sum = 0;
+        // Perform the dot product of row of A and column of B
+        for (int k = 0; k < n; k++)
+        {
+            sum += A[row * n + k] * B[k * q + col];
+        }
+        // Store the result in the output matrix C
+        C[row * q + col] = sum;
+    }
+}
+
+int main()
+{
+    // Get dimensions for matrix A (m x n)
+    printf("Enter matrix dimensions of A (m and n): ");
+    int m, n;
+    scanf("%d %d", &m, &n);
+
+    // Declare matrix A on host (1D representation)
+    int A[m * n];
+
+    // Get dimensions for matrix B (p x q)
+    printf("Enter matrix dimensions of B (p and q): ");
+    int p, q;
+    scanf("%d %d", &p, &q);
+
+    // Check matrix multiplication compatibility
+    if (n != p)
+    {
+        printf("Matrix multiplication not possible. n must equal p.\n");
+        exit(-1);
+    }
+
+    // Declare matrix B on host
+    int B[p * q];
+
+    // Input elements of matrix A
+    int k = 0;
+    printf("Enter matrix A: \n");
+    for (int i = 0; i < m; i++)
+    {
+        for (int j = 0; j < n; j++)
+        {
+            scanf("%d", &A[k++]);
+        }
+    }
+
+    // Input elements of matrix B
+    k = 0;
+    printf("Enter matrix B: \n");
+    for (int i = 0; i < p; i++)
+    {
+        for (int j = 0; j < q; j++)
+        {
+            scanf("%d", &B[k++]);
+        }
+    }
+
+    // Matrix C will store result (size m x q)
+    int C[m * q];
+
+    // Device (GPU) pointers
+    int *d_A, *d_B, *d_C;
+
+    // Allocate memory on GPU for matrices
+    cudaMalloc((void**)&d_A, m * n * sizeof(int));
+    cudaMalloc((void**)&d_B, p * q * sizeof(int));
+    cudaMalloc((void**)&d_C, m * q * sizeof(int));
+
+    // Copy matrices A and B to GPU
+    cudaMemcpy(d_A, A, m * n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, B, p * q * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Define block size (2x2 threads per block)
+    dim3 blk(2, 2, 1);
+
+    // Calculate grid size to ensure full coverage of matrix C
+    dim3 grid(ceil(q / 2.0), ceil(m / 2.0), 1);
+
+    // Launch the CUDA kernel
+    MatrixMul<<<grid, blk>>>(d_A, d_B, d_C, n, m, q);
+
+    // Copy result matrix C from GPU to CPU
+    cudaMemcpy(C, d_C, m * q * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Print the final output matrix C
+    k = 0;
+    printf("Final matrix C (Result of A x B): \n");
+    for (int i = 0; i < m; i++)
+    {
+        for (int j = 0; j < q; j++)
+        {
+            printf("%d ", C[k++]);
+        }
+        printf("\n");
+    }
+
+    // Free GPU memory
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+
+    return 0;
+}
+Let's break down the provided CUDA program in detail. This program performs **matrix multiplication** on two matrices `A` and `B` and stores the result in matrix `C` using CUDA parallelism.
+
+### **Problem Overview**
+- We are given two matrices `A` (with dimensions `m x n`) and `B` (with dimensions `p x q`).
+- The goal is to multiply these matrices and store the result in matrix `C` (with dimensions `m x q`).
+- For matrix multiplication to be valid, the number of columns in `A` (`n`) must match the number of rows in `B` (`p`).
+- The multiplication follows the standard formula for matrix multiplication: 
+  \[
+  C_{ij} = \sum_{k=0}^{n-1} A_{ik} \cdot B_{kj}
+  \]
+  where `C[i][j]` is the element in the `i`-th row and `j`-th column of matrix `C`.
+
+### **Step-by-Step Breakdown**
+
+#### **Host Code (`main()` function)**
+
+1. **Matrix Dimension Input**:
+   ```cpp
+   printf("Enter matrix dimensions of A(m and n): ");
+   int m, n;
+   scanf("%d %d", &m, &n);
+   ```
+   - First, the program takes dimensions `m` and `n` for matrix `A` (of size `m x n`).
+   
+2. **Matrix Validation for Multiplication**:
+   ```cpp
+   printf("Enter matrix dimensions of B(p and q): ");
+   int p, q;
+   scanf("%d %d", &p, &q);
+   if(n != p)
+   {
+       printf("Matrix multiplication not possible\n");
+       exit(-1);
+   }
+   ```
+   - Then, it takes dimensions `p` and `q` for matrix `B` (of size `p x q`).
+   - The program checks if matrix multiplication is possible by ensuring that `n` (columns of `A`) equals `p` (rows of `B`). If not, it terminates the program.
+
+3. **Matrix Input**:
+   - **Matrix `A`** is entered as a 1D array. The program reads the values and stores them.
+   - **Matrix `B`** is similarly entered as a 1D array.
+
+4. **CUDA Memory Allocation**:
+   ```cpp
+   int *d_A, *d_B, *d_C;
+   cudaMalloc((void**)&d_A, m * n * sizeof(int));
+   cudaMalloc((void**)&d_B, p * q * sizeof(int));
+   cudaMalloc((void**)&d_C, m * q * sizeof(int));
+   ```
+   - Memory for matrices `A`, `B`, and `C` is allocated on the GPU using `cudaMalloc`. The size of each matrix is calculated in terms of the number of elements (rows × columns) and the size of each element (usually `sizeof(int)`).
+
+5. **Copying Data to GPU**:
+   ```cpp
+   cudaMemcpy(d_A, A, m * n * sizeof(int), cudaMemcpyHostToDevice);
+   cudaMemcpy(d_B, B, p * q * sizeof(int), cudaMemcpyHostToDevice);
+   ```
+   - The data from matrices `A` and `B` is copied from the host (CPU) memory to the device (GPU) memory using `cudaMemcpy`.
+
+6. **Kernel Launch Configuration**:
+   ```cpp
+   dim3 blk(2, 2, 1);
+   dim3 grid(ceil(q / 2.0), ceil(m / 2.0), 1);
+   ```
+   - The kernel will be launched with a grid of threads.
+   - Each block has 2 threads in the x and y directions (`dim3 blk(2, 2, 1)`).
+   - The grid configuration is set so that we cover all elements in the resulting matrix `C`. 
+     - The number of blocks in the x-direction is `ceil(q / 2.0)` and in the y-direction is `ceil(m / 2.0)`. This ensures that enough threads are launched to cover all elements in `C`.
+
+7. **Kernel Launch**:
+   ```cpp
+   MatrixMul<<<grid, blk>>>(d_A, d_B, d_C, n, m, q);
+   ```
+   - The `MatrixMul` kernel is launched on the GPU with the specified grid and block configuration. The kernel takes the matrices `A`, `B`, and `C` (in device memory) and the matrix dimensions as arguments.
+
+8. **Copying Result Back to Host**:
+   ```cpp
+   cudaMemcpy(C, d_C, m * q * sizeof(int), cudaMemcpyDeviceToHost);
+   ```
+   - After the kernel has executed, the result matrix `C` is copied back from the device to the host memory.
+
+9. **Display the Result**:
+   - Finally, the program prints the resulting matrix `C` element by element.
+
+10. **Freeing Allocated Memory**:
+   ```cpp
+   cudaFree(d_A);
+   cudaFree(d_B);
+   cudaFree(d_C);
+   ```
+   - The GPU memory allocated for matrices `A`, `B`, and `C` is freed using `cudaFree`.
+
+---
+
+#### **Kernel Code (`MatrixMul` kernel)**
+
+This is the function that will be executed on the GPU. It's where the actual matrix multiplication happens.
+
+```cpp
+__global__ void MatrixMul(int * A, int* B, int* C, int n, int m, int q)
+{
+    int row = threadIdx.y + blockDim.y * blockIdx.y;
+    int col = threadIdx.x + blockDim.x * blockIdx.x;
+
+    if(row < m && col < q)
+    {
+        int sum = 0;
+        for(int k = 0; k < n; k++)
+            sum += A[row * n + k] * B[k * q + col];
+
+        C[row * q + col] = sum;
+    }
+}
+```
+
+1. **Thread Indexing**:
+   ```cpp
+   int row = threadIdx.y + blockDim.y * blockIdx.y;
+   int col = threadIdx.x + blockDim.x * blockIdx.x;
+   ```
+   - The global thread index is calculated by considering both the block and thread indices. 
+     - `threadIdx` gives the thread's position within its block.
+     - `blockIdx` gives the block's position within the grid.
+     - `blockDim` gives the size of the block (i.e., the number of threads in each block).
+
+   - This results in each thread being assigned to a unique element `(row, col)` of the resulting matrix `C`.
+
+2. **Boundary Check**:
+   ```cpp
+   if(row < m && col < q)
+   ```
+   - The `if` condition ensures that the thread does not try to compute values outside the bounds of matrix `C`.
+
+3. **Matrix Multiplication**:
+   ```cpp
+   int sum = 0;
+   for(int k = 0; k < n; k++)
+       sum += A[row * n + k] * B[k * q + col];
+   ```
+   - The core computation: each thread computes one element of the result matrix `C` using the standard matrix multiplication formula:
+     \[
+     C_{row,col} = \sum_{k=0}^{n-1} A_{row,k} \cdot B_{k,col}
+     \]
+   - The indices `A[row * n + k]` and `B[k * q + col]` are used to access the elements of matrices `A` and `B` in their 1D representations.
+
+4. **Store the Result**:
+   ```cpp
+   C[row * q + col] = sum;
+   ```
+   - The computed sum is stored in the corresponding position of matrix `C`.
+
+---
+
+### **Key CUDA Concepts to Understand**
+
+1. **Memory Management**:
+   - **`cudaMalloc`** allocates memory on the GPU.
+   - **`cudaMemcpy`** transfers data between host and device memory.
+   - After the computation, `cudaFree` is used to release the GPU memory.
+
+2. **Thread and Block Organization**:
+   - Threads are organized into **blocks**, and blocks are organized into a **grid**.
+   - Each thread is responsible for computing one element of the resulting matrix.
+   - The kernel must be configured with an appropriate number of threads and blocks to cover all elements of the result matrix.
+
+3. **Parallelism**:
+   - Each thread computes a part of the matrix multiplication, allowing the program to take advantage of the massive parallelism offered by CUDA-capable GPUs.
+
+4. **Grid and Block Configuration**:
+   - The kernel launch configuration (`dim3 blk` and `dim3 grid`) determines how the threads are distributed across the GPU.
+   - Here, the grid size is computed based on the dimensions of the resulting matrix `C`.
+
+---
+
+By understanding these concepts—matrix multiplication, CUDA memory management, thread indexing, and kernel launch configuration—you can effectively write and optimize CUDA programs for matrix operations.
