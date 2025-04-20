@@ -1,0 +1,191 @@
+Sure! To modify the code to take user input instead of generating random values, you can replace the `rand()` function with `scanf()` to accept values for the arrays. Here's how you can modify the code to take user input:
+
+### Modified Code to Accept User Input:
+
+```c
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+// Kernel for vector addition
+__global__ void vector_add(int *A, int *B, int *C, int N) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (idx < N) {
+        C[idx] = A[idx] + B[idx];
+    }
+}
+
+// Kernel for odd-even sorting
+__global__ void odd_kernel(int *A, int N) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (idx < N && idx % 2 == 1) {
+        int temp;
+        if (idx + 1 < N && A[idx] > A[idx + 1]) {
+            temp = A[idx];
+            A[idx] = A[idx + 1];
+            A[idx + 1] = temp;
+        }
+    }
+}
+
+__global__ void even_kernel(int *A, int N) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (idx < N && idx % 2 == 0) {
+        int temp;
+        if (idx + 1 < N && A[idx] > A[idx + 1]) {
+            temp = A[idx];
+            A[idx] = A[idx + 1];
+            A[idx + 1] = temp;
+        }
+    }
+}
+
+// Kernel for 1D convolution
+__global__ void conv1d(int *N, int *M, int *P, int width, int mask_width) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (idx < width) {
+        int sum = 0;
+        int sp = idx - mask_width / 2;
+        for (int i = 0; i < mask_width; i++) {
+            if (sp + i >= 0 && sp + i < width)
+                sum += N[sp + i] * M[i];
+        }
+        P[idx] = sum;
+    }
+}
+
+int main() {
+    int N, mask_width;
+
+    // Take user input
+    printf("Enter the number of elements (N): ");
+    scanf("%d", &N);
+
+    int *h_A, *h_B, *h_C, *h_unsorted;
+    int *d_A, *d_B, *d_C;
+    int *d_N, *d_M, *d_P;
+
+    h_A = (int*)malloc(N * sizeof(int));
+    h_B = (int*)malloc(N * sizeof(int));
+    h_C = (int*)malloc(N * sizeof(int));
+    h_unsorted = (int*)malloc(N * sizeof(int));
+
+    cudaMalloc((void**)&d_A, N * sizeof(int));
+    cudaMalloc((void**)&d_B, N * sizeof(int));
+    cudaMalloc((void**)&d_C, N * sizeof(int));
+
+    printf("Enter elements for A array:\n");
+    for (int i = 0; i < N; i++) {
+        printf("A[%d]: ", i);
+        scanf("%d", &h_A[i]);
+    }
+
+    printf("Enter elements for B array:\n");
+    for (int i = 0; i < N; i++) {
+        printf("B[%d]: ", i);
+        scanf("%d", &h_B[i]);
+    }
+
+    printf("Enter elements for Unsorted array:\n");
+    for (int i = 0; i < N; i++) {
+        printf("Unsorted[%d]: ", i);
+        scanf("%d", &h_unsorted[i]);
+    }
+
+    // Copy data to device memory
+    cudaMemcpy(d_A, h_A, N * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, h_B, N * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_unsorted, h_unsorted, N * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Vector Addition
+    vector_add<<<(N + 255) / 256, 256>>>(d_A, d_B, d_C, N);
+
+    cudaMemcpy(h_C, d_C, N * sizeof(int), cudaMemcpyDeviceToHost);
+
+    printf("Vector addition result (A + B):\n");
+    for (int i = 0; i < N; i++) {
+        printf("%d ", h_C[i]);
+    }
+    printf("\n");
+
+    // Sorting using odd-even method
+    for (int i = 0; i <= N / 2; i++) {
+        odd_kernel<<<(N + 255) / 256, 256>>>(d_unsorted, N);
+        even_kernel<<<(N + 255) / 256, 256>>>(d_unsorted, N);
+    }
+
+    cudaMemcpy(h_unsorted, d_unsorted, N * sizeof(int), cudaMemcpyDeviceToHost);
+
+    printf("Sorted array using odd-even sort:\n");
+    for (int i = 0; i < N; i++) {
+        printf("%d ", h_unsorted[i]);
+    }
+    printf("\n");
+
+    // Convolution operation
+    printf("Enter mask width for convolution: ");
+    scanf("%d", &mask_width);
+
+    int *h_M, *h_P;
+    h_M = (int*)malloc(mask_width * sizeof(int));
+    h_P = (int*)malloc(N * sizeof(int));
+
+    cudaMalloc((void**)&d_M, mask_width * sizeof(int));
+    cudaMalloc((void**)&d_P, N * sizeof(int));
+
+    printf("Enter elements for convolution mask:\n");
+    for (int i = 0; i < mask_width; i++) {
+        printf("Mask[%d]: ", i);
+        scanf("%d", &h_M[i]);
+    }
+
+    cudaMemcpy(d_M, h_M, mask_width * sizeof(int), cudaMemcpyHostToDevice);
+
+    conv1d<<<(N + 255) / 256, 256>>>(d_A, d_M, d_P, N, mask_width);
+
+    cudaMemcpy(h_P, d_P, N * sizeof(int), cudaMemcpyDeviceToHost);
+
+    printf("1D Convolution result:\n");
+    for (int i = 0; i < N; i++) {
+        printf("%d ", h_P[i]);
+    }
+    printf("\n");
+
+    // Free device and host memory
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+    cudaFree(d_M);
+    cudaFree(d_P);
+    free(h_A);
+    free(h_B);
+    free(h_C);
+    free(h_unsorted);
+    free(h_M);
+    free(h_P);
+
+    return 0;
+}
+```
+
+### Key Changes:
+1. **User Input**:
+   - The code now uses `scanf()` to allow users to enter values for arrays `A`, `B`, and `Unsorted` manually.
+
+2. **Vector Addition**:
+   - The `vector_add` kernel performs element-wise addition of arrays `A` and `B`, storing the result in array `C`.
+
+3. **Odd-Even Sort**:
+   - The `odd_kernel` and `even_kernel` perform the odd-even sorting of the `Unsorted` array.
+
+4. **1D Convolution**:
+   - A 1D convolution is performed on array `A` using a mask provided by the user. The result is stored in array `P`.
+
+5. **Array Memory Management**:
+   - Memory for arrays is allocated using `malloc` for host memory and `cudaMalloc` for device memory.
+   - Data is copied between host and device using `cudaMemcpy`.
+
+This program first takes input for the arrays and performs vector addition, odd-even sorting, and 1D convolution operations. The results of each operation are displayed after completion.
+
+Let me know if you need further clarification or adjustments!
