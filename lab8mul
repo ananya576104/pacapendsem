@@ -1,0 +1,152 @@
+#include "cuda_runtime.h"
+#include "device_launch_parameters.h"
+#include <stdio.h>
+#include <stdlib.h>
+
+// Row-wise matrix multiplication kernel
+__global__ void kernelrow(int * A, int * B, int * C, int n, int q)
+{
+    int row = threadIdx.x;  // Thread ID corresponding to row in matrix A
+
+    // Loop over the columns of matrix B
+    for (int i = 0; i < q; i++) {
+        int sum = 0;
+        // Compute the sum of products for the current row of A and the column of B
+        for (int j = 0; j < n; j++) {
+            sum += A[row * n + j] * B[j * q + i];
+        }
+        // Store the result in matrix C
+        C[row * q + i] = sum;
+    }
+}
+
+// Column-wise matrix multiplication kernel
+__global__ void kernelcol(int * A, int * B, int * C, int m, int n)
+{
+    int col = threadIdx.x;  // Thread ID corresponding to column in matrix B
+    int q = blockDim.x;  // The number of threads in the block (equal to number of columns of B)
+
+    // Loop over the rows of matrix A
+    for (int i = 0; i < m; i++) {
+        int sum = 0;
+        // Compute the sum of products for the current row of A and the column of B
+        for (int j = 0; j < n; j++) {
+            sum += A[i * n + j] * B[j * q + col];
+        }
+        // Store the result in matrix C
+        C[i * q + col] = sum;
+    }
+}
+
+// 2D grid matrix multiplication kernel
+__global__ void kernelele(int * A, int * B, int * C, int n)
+{
+    int row = threadIdx.y;  // Thread ID corresponding to row in matrix A
+    int col = threadIdx.x;  // Thread ID corresponding to column in matrix B
+    int q = blockDim.x;  // Number of columns in B
+
+    int sum = 0;
+
+    // Compute the sum of products for the current row of A and the column of B
+    for (int k = 0; k < n; k++) {
+        sum += A[row * n + k] * B[k * q + col];
+    }
+    
+    // Store the result in matrix C
+    C[row * q + col] = sum;
+}
+
+int main()
+{
+    int m, n, p, q;
+    // Input dimensions for matrix A
+    printf("Enter matrix dimensions of A (m and n): ");
+    scanf("%d %d", &m, &n);
+    int A[m * n];
+
+    // Input dimensions for matrix B
+    printf("Enter matrix dimensions of B (p and q): ");
+    scanf("%d %d", &p, &q);
+
+    // Check for matrix multiplication condition (n == p)
+    if (n != p) {
+        printf("Matrix multiplication not possible\n");
+        exit(-1);
+    }
+    int B[p * q];
+
+    // Input matrix A
+    int k = 0;
+    printf("Enter matrix A: \n");
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            scanf("%d", &A[k++]);
+        }
+    }
+
+    // Input matrix B
+    k = 0;
+    printf("Enter matrix B: \n");
+    for (int i = 0; i < p; i++) {
+        for (int j = 0; j < q; j++) {
+            scanf("%d", &B[k++]);
+        }
+    }
+
+    // Initialize result matrix C
+    int C[m * q];
+
+    // Device pointers for matrices A, B, and C
+    int *d_A, *d_B, *d_C;
+    cudaMalloc((void**)&d_A, m * n * sizeof(int));  // Allocate memory for A on device
+    cudaMalloc((void**)&d_B, p * q * sizeof(int));  // Allocate memory for B on device
+    cudaMalloc((void**)&d_C, m * q * sizeof(int));  // Allocate memory for C on device
+
+    // Copy matrices A and B from host to device
+    cudaMemcpy(d_A, A, m * n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, B, p * q * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Select kernel for matrix multiplication
+    int choice;
+    printf("Choose kernel for matrix multiplication:\n");
+    printf("1. Row-wise matrix multiplication\n");
+    printf("2. Column-wise matrix multiplication\n");
+    printf("3. 2D grid matrix multiplication\n");
+    scanf("%d", &choice);
+
+    // Launch the selected kernel
+    if (choice == 1) {
+        kernelrow<<<1, m>>>(d_A, d_B, d_C, n, q);  // Launch row-wise kernel
+    } else if (choice == 2) {
+        kernelcol<<<1, q>>>(d_A, d_B, d_C, m, n);  // Launch column-wise kernel
+    } else if (choice == 3) {
+        dim3 blk(q, m, 1);  // Define 2D grid of blocks
+        kernelele<<<1, blk>>>(d_A, d_B, d_C, n);  // Launch 2D grid kernel
+    } else {
+        printf("Invalid choice!\n");
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        return -1;
+    }
+
+    // Copy the result matrix C from device to host
+    cudaMemcpy(C, d_C, m * q * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Output the result matrix C
+    k = 0;
+    printf("Final matrix C: \n");
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < q; j++) {
+            printf("%d ", C[k++]);
+        }
+        printf("\n");
+    }
+
+    // Free device memory
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+
+    return 0;
+}
