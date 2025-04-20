@@ -1,0 +1,78 @@
+
+
+I'll write a basic MPI program that demonstrates key MPI functions while handling user input. This example should help you understand the fundamental concepts and earn basic marks.
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <mpi.h>
+
+int main(int argc, char *argv[]) {
+    int rank, size;
+    int number;
+    int sum = 0;
+    int total_sum = 0;
+    
+    // Initialize MPI environment
+    MPI_Init(&argc, &argv);
+    
+    // Get the rank of the process and the total number of processes
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    
+    // Process 0 (master) gets input from the user
+    if (rank == 0) {
+        printf("Enter a number to be processed: ");
+        scanf("%d", &number);
+        
+        printf("Master process (rank %d) received input: %d\n", rank, number);
+        
+        // Send the number to all other processes
+        for (int i = 1; i < size; i++) {
+            MPI_Send(&number, 1, MPI_INT, i, 0, MPI_COMM_WORLD);
+        }
+    } else {
+        // Other processes receive the number from process 0
+        MPI_Recv(&number, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        printf("Process rank %d received number: %d\n", rank, number);
+    }
+    
+    // Each process computes its portion of work
+    // In this example, each process computes the square of (number + rank)
+    sum = (number + rank) * (number + rank);
+    printf("Process rank %d computed: (%d + %d)² = %d\n", rank, number, rank, sum);
+    
+    // Collect results using MPI_Reduce
+    MPI_Reduce(&sum, &total_sum, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    
+    // Master process prints the final result
+    if (rank == 0) {
+        printf("\nFinal sum of all computed values: %d\n", total_sum);
+    }
+    
+    // Finalize the MPI environment
+    MPI_Finalize();
+    return 0;
+}
+
+```
+
+This basic MPI program demonstrates several key concepts:
+
+1. **MPI Initialization and Finalization**: Using `MPI_Init()` and `MPI_Finalize()`
+2. **Process Information**: Getting rank and size with `MPI_Comm_rank()` and `MPI_Comm_size()`
+3. **Point-to-Point Communication**: Using `MPI_Send()` and `MPI_Recv()`
+4. **Collective Communication**: Using `MPI_Reduce()` to gather and sum results
+5. **User Input**: The master process (rank 0) takes input and distributes it
+
+To compile this program:
+```
+mpicc -o basic_mpi basic_mpi.c
+```
+
+To run with 4 processes:
+```
+mpirun -np 4 ./basic_mpi
+```
+
+The program gets a number from the user, distributes it to all processes, each process computes the square of (number + rank), and finally all results are summed together and displayed by the master process. This demonstrates basic data distribution, computation, and result collection patterns common in MPI programming.
