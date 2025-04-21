@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-
+#include<math.h>
 #define MAX_LEN 1024
 
 // ============= CUDA KERNELS ==================== //
@@ -37,7 +37,7 @@ __global__ void matrixTranspose(int* A, int* B, int m, int n) {
 }
 
 __global__ void repeatChars(char* A, int* B, char* STR, int* offset, int size) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
     if (idx < size) {
         int rep = B[idx];
         int start = offset[idx];
@@ -47,16 +47,18 @@ __global__ void repeatChars(char* A, int* B, char* STR, int* offset, int size) {
     }
 }
 
-__global__ void rowSquareCube(int* A, int* sq, int* cube, int size) {
-    int idx = threadIdx.x + blockIdx.x * blockDim.x;
-    if (idx < size) {
+__global__ void rowSquareCube(int* A, int* sq, int* cube, int m, int n) {
+    int row = threadIdx.y + blockIdx.y * blockDim.y;
+    int col = threadIdx.x + blockIdx.x * blockDim.x;
+    if (row < m && col < n) {
+        int idx = row * n + col;
         sq[idx] = A[idx] * A[idx];
         cube[idx] = A[idx] * A[idx] * A[idx];
     }
 }
 
 __global__ void rowSumProduct(int* A, int* rowSum, int* rowProd, int m, int n) {
-    int row = blockIdx.x;
+    int row = threadIdx.y + blockIdx.y * blockDim.y;
     if (row < m) {
         int sum = 0, prod = 1;
         for (int j = 0; j < n; j++) {
@@ -70,7 +72,7 @@ __global__ void rowSumProduct(int* A, int* rowSum, int* rowProd, int m, int n) {
 }
 
 __global__ void colSumProduct(int* A, int* colSum, int* colProd, int m, int n) {
-    int col = blockIdx.x;
+    int col = threadIdx.x + blockIdx.x * blockDim.x;
     if (col < n) {
         int sum = 0, prod = 1;
         for (int i = 0; i < m; i++) {
@@ -83,7 +85,7 @@ __global__ void colSumProduct(int* A, int* colSum, int* colProd, int m, int n) {
     }
 }
 
-// ============= HOST FUNCTIONS ================= //
+// ============= HOST HELPER FUNCTIONS ================= //
 
 void computeOffset(int* B, int* offset, int size) {
     offset[0] = 0;
@@ -99,6 +101,8 @@ void printMatrix(int* mat, int rows, int cols, const char* name) {
         if ((i + 1) % cols == 0) printf("\n");
     }
 }
+
+// ============= MAIN FUNCTION ================= //
 
 int main() {
     int m, n, q;
@@ -128,6 +132,7 @@ int main() {
     printf("Enter repetition counts for each character (%d values):\n", sizeA);
     for (int i = 0; i < sizeA; i++) scanf("%d", &h_REP[i]);
 
+    // Host allocations
     int* h_Add = (int*)malloc(sizeA * sizeof(int));
     int* h_Mul = (int*)malloc(m * q * sizeof(int));
     int* h_Trans = (int*)malloc(n * m * sizeof(int));
@@ -143,7 +148,7 @@ int main() {
     int totalLen = h_offset[sizeA - 1] + h_REP[sizeA - 1];
     char* h_STR = (char*)malloc((totalLen + 1) * sizeof(char));
 
-    // Device memory
+    // Device allocations
     int *d_A, *d_B, *d_Add, *d_Mul, *d_Trans, *d_Sq, *d_Cube;
     int *d_RowSum, *d_RowProd, *d_ColSum, *d_ColProd;
     char *d_CHA, *d_STR;
@@ -165,25 +170,37 @@ int main() {
     cudaMalloc(&d_REP, sizeA * sizeof(int));
     cudaMalloc(&d_offset, sizeA * sizeof(int));
 
-    // Copy to device
     cudaMemcpy(d_A, h_A, sizeA * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_B, h_B, sizeB * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_CHA, h_CHA, sizeA * sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(d_REP, h_REP, sizeA * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_offset, h_offset, sizeA * sizeof(int), cudaMemcpyHostToDevice);
 
-    dim3 block(16, 16);
-    dim3 gridAdd((n + 15) / 16, (m + 15) / 16);
-    dim3 gridMul((q + 15) / 16, (m + 15) / 16);
+    // CUDA kernel configuration using ceil()
+    dim3 block2D(16, 16);
+    dim3 gridA(ceil((float)n / 16.0), ceil((float)m / 16.0));      // for m x n matrices
+    dim3 gridB(ceil((float)q / 16.0), ceil((float)m / 16.0));      // for m x q result
+    dim3 gridC(ceil((float)n / 16.0), ceil((float)m / 16.0));      // for transpose and square/cube
 
-    matrixAdd<<<gridAdd, block>>>(d_A, d_A, d_Add, m, n);
-    matrixMultiply<<<gridMul, block>>>(d_A, d_B, d_Mul, m, n, q);
-    matrixTranspose<<<gridAdd, block>>>(d_A, d_Trans, m, n);
-    rowSquareCube<<<(sizeA + 255) / 256, 256>>>(d_A, d_Sq, d_Cube, sizeA);
-    rowSumProduct<<<m, 1>>>(d_A, d_RowSum, d_RowProd, m, n);
-    colSumProduct<<<n, 1>>>(d_A, d_ColSum, d_ColProd, m, n);
-    repeatChars<<<(sizeA + 255) / 256, 256>>>(d_CHA, d_REP, d_STR, d_offset, sizeA);
+    matrixAdd<<<gridA, block2D>>>(d_A, d_A, d_Add, m, n);
+    matrixMultiply<<<gridB, block2D>>>(d_A, d_B, d_Mul, m, n, q);
+    matrixTranspose<<<gridC, block2D>>>(d_A, d_Trans, m, n);
+    rowSquareCube<<<gridA, block2D>>>(d_A, d_Sq, d_Cube, m, n);
 
+    dim3 blockRow(16, 1);
+    dim3 gridRow(ceil((float)m / 16.0), 1);
+    rowSumProduct<<<gridRow, blockRow>>>(d_A, d_RowSum, d_RowProd, m, n);
+
+    dim3 blockCol(16, 1);
+    dim3 gridCol(ceil((float)n / 16.0), 1);
+    colSumProduct<<<gridCol, blockCol>>>(d_A, d_ColSum, d_ColProd, m, n);
+
+    int block1D = 256;
+    int grid1D = ceil((float)sizeA / block1D);
+    repeatChars<<<grid1D, block1D>>>(d_CHA, d_REP, d_STR, d_offset, sizeA);
+
+
+    // Copy results
     cudaMemcpy(h_Add, d_Add, sizeA * sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_Mul, d_Mul, m * q * sizeof(int), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_Trans, d_Trans, n * m * sizeof(int), cudaMemcpyDeviceToHost);
@@ -196,7 +213,7 @@ int main() {
     cudaMemcpy(h_STR, d_STR, totalLen * sizeof(char), cudaMemcpyDeviceToHost);
     h_STR[totalLen] = '\0';
 
-    // Output
+    // Output results
     printMatrix(h_Add, m, n, "Matrix Addition (A + A)");
     printMatrix(h_Mul, m, q, "Matrix Multiplication (A x B)");
     printMatrix(h_Trans, n, m, "Transpose of A");
@@ -215,7 +232,7 @@ int main() {
 
     printf("\n\nExpanded String:\n%s\n", h_STR);
 
-    // Free
+    // Free memory
     cudaFree(d_A); cudaFree(d_B); cudaFree(d_Add); cudaFree(d_Mul);
     cudaFree(d_Trans); cudaFree(d_Sq); cudaFree(d_Cube);
     cudaFree(d_RowSum); cudaFree(d_RowProd); cudaFree(d_ColSum); cudaFree(d_ColProd);
